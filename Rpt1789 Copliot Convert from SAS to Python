@@ -1,0 +1,123 @@
+import pandas as pd
+from datetime import datetime, timedelta
+import os
+from sqlalchemy import create_engine
+
+# Date Variables
+run_dt = datetime.now().strftime('%d%b%Y').upper()
+start_dt = (datetime.now() - timedelta(days=7)).strftime('%d%b%Y').upper()
+
+print(run_dt)
+print(start_dt)
+
+# Set environment variable for Google Application Credentials
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = "/home/a95801c/.gcloud/adc.json"
+
+# Database connection
+engine = create_engine(
+    "bigquery://https://www.googleapis.com/bigquery/v2:443;ProjectId=idd-eqpds-nonprod-1;"
+    "OAuthType=3;OAuthPvtKeyPath=/home/a95801c/.gcloud/adc.json;EnableHighThroughPutAPI=0;"
+    "HighThroughputMinTableSize=999999999;StringColumnLength=255"
+)
+
+# SQL query
+query = f"""
+SELECT
+    a.SVC_PRV_SRC_SYS_ID as ProvNo,
+    a.NWRK_ID as NetwkPrefix,
+    a.NWRK_PRV_IND as NetInd,
+    b.LOB_ID as LOB,
+    a.GRP_ID as GRP_NO,
+    a.SUBS_ID as SBR_NO,
+    a.PMT_TO_CD as PayToCd,
+    b.ITS_CLM_IND as ITS_Ind,
+    a.CLM_TYP_ID as ClmType,
+    a.CLM_FAC_TYP_CD as FacilityType,
+    a.CLM_BIL_TYP_CD as BillType,
+    a.CLM_IP_OP_CD as IP_OP_Cd,
+    b.POS_CD as PlcOfSrvc,
+    a.ADJ_FROM_REL_CLM_ID as OriginalClm,
+    a.CLM_ID as ClmNo,
+    a.CLM_RCPT_DT as RecDt,
+    a.CLM_FROM_DOS as FromDOS,
+    a.CLM_THRU_DOS as ThruDOS,
+    a.CLM_PD_DT as PaidDt,
+    b.LN_NUM as LineNo,
+    b.REV_CD as RevCd,
+    b.PROC_CD as ProcCd,
+    b.PROC_CD_MOD as Mod1,
+    a.TOT_CHG_AMT as ClaimCharged,
+    a.TOT_ALLW_AMT as ClaimAllowed,
+    b.CLM_LN_CHG_AMT as LineCharge,
+    b.CLM_LN_ALLW_AMT as LineAllowed,
+    b.CLM_LN_COINS_AMT as LineCoins,
+    b.CLM_LN_CP_AMT as LineCopay,
+    b.CLM_LN_DED_AMT as LineDeduc,
+    b.CLM_LN_PD_AMT as LinePaid,
+    b.CLM_LN_DND_TOT as LineDenied,
+    a.EOB_EXPLN_CD as EOB_Cd,
+    b.PRIM_DND_REAS as EX1,
+    a.CLM_PRCSR_ID as UserID
+FROM ECW_V.CLAIM_HEADER a
+INNER JOIN ECW_V.CLAIM_LINE b
+    ON a.SRC_SYS_ID = b.SRC_SYS_ID
+    AND a.CLM_ID = b.CLM_ID
+    AND a.CLM_VOID_ADJ_CD = b.CLM_VOID_ADJ_CD
+    AND a.CLM_PD_DT = b.CLM_PD_DT
+    AND a.INSR_ID = b.INSR_ID
+WHERE a.CLM_PD_DT >= '{start_dt}'
+    AND b.LOB_ID = 'MV01'
+    AND a.SRC_SYS_ID = 'FACETS'
+    AND a.CLM_TYP_ID = 'H'
+    AND a.CLM_IP_OP_CD != 'O'
+    AND b.PRIM_DND_REAS IN ('UM0', 'UM1', 'UM2')
+    AND a.LTST_VER_IND = 'Y'
+"""
+# Execute query and load data into DataFrame
+df = pd.read_sql(query, engine)
+
+# Check if there are any records
+if df.empty:
+    print("No members in report this week")
+else:
+    # Save the DataFrame to an Excel file
+    output_file = os.path.join(os.getenv('WORK'), 'Report1729_Monitoring1.xlsx')
+    df.to_excel(output_file, sheet_name='UM0 UM1 UM2', index=False)
+
+    # Send email with the report attached
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.base import MIMEBase
+    from email.mime.text import MIMEText
+    from email.utils import formatdate
+    from email import encoders
+
+    def send_email(send_from, send_to, subject, text, files=None):
+        msg = MIMEMultipart()
+        msg['From'] = send_from
+        msg['To'] = ', '.join(send_to)
+        msg['Date'] = formatdate(localtime=True)
+        msg['Subject'] = subject
+
+        msg.attach(MIMEText(text))
+
+        for f in files or []:
+            part = MIMEBase('application', 'octet-stream')
+            with open(f, 'rb') as file:
+                part.set_payload(file.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', 'attachment; filename="%s"' % os.path.basename(f))
+            msg.attach(part)
+
+        smtp = smtplib.SMTP('localhost')
+        smtp.sendmail(send_from, send_to, msg.as_string())
+        smtp.close()
+
+    send_email(
+        send_from="April_Patterson@bcbst.com",
+        send_to=["DSNP_Claims_Analysts_Report_Distribution@bcbst.com"],
+        subject="DSNP UM Denial Monitoring",
+        text="DSNP denials for UM0, UM1, and UM2 for the past week are attached for your review.",
+        files=[output_file]
+    )
+
