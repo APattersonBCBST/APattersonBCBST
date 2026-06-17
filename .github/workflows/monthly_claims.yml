@@ -1,0 +1,60 @@
+
+name: Monthly Claims Pipeline
+
+on:
+  schedule:
+    - cron: '0 11 2 * *'
+  workflow_dispatch:
+
+jobs:
+  monthly_claims_job:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set Up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Python Packages
+      run: |
+        pip install pandas
+        pip install numpy
+        pip install openpyxl
+        pip install google-cloud-bigquery
+        pip install pyarrow
+
+    - name: Authenticate to GCP
+      env:
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+      run: |
+        echo "$GCP_CREDENTIALS" > gcp-key.json
+        export GOOGLE_APPLICATION_CREDENTIALS=gcp-key.json
+
+    - name: Run Extract Step
+      run: |
+        python scripts/extract_monthly_claims.py
+
+    - name: Run Transform Step
+      run: |
+        python scripts/transform_claims.py
+
+    - name: Run Validation Checks
+      run: |
+        python scripts/validate_claims.py
+
+    - name: Generate Excel Report
+      run: |
+        python scripts/create_excel_report.py
+
+    - name: Publish Output
+      run: |
+        python scripts/publish_to_network_drive.py
+
+    - name: Send Email Notification
+      run: |
+        python scripts/send_email_notification.py
