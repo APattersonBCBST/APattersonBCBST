@@ -37,7 +37,7 @@ jobs:
 
     - name: Run Extract Step
       run: |
-        python APatersonBCBST/scripts/extract_monthly_claims.py
+        python scripts/extract_monthly_claims.py
 
     - name: Run Transform Step
       run: |
